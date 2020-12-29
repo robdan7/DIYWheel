@@ -18,6 +18,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import kotlinx.android.synthetic.main.activity_connection.*
 import kotlinx.android.synthetic.main.activity_main.*
 
 private const val REQUEST_ENABLE_BT = 1
@@ -30,7 +31,8 @@ class MainActivity : AppCompatActivity(), AdapterView.OnItemClickListener {
     private var mScanning = false
     private val SCAN_PERIOD: Long = 10000
     private var connected_device = -1
-    private var temp = false
+    private var connectionStatus = false
+    private var connectionFailures = 0
 
     /**
      * Collection of bluetooth connection stuff
@@ -70,34 +72,47 @@ class MainActivity : AppCompatActivity(), AdapterView.OnItemClickListener {
             //startActivity(Intent(this, Connection::class.java))
             search()
         }
+        DisconnectButton.setOnClickListener {
+            connectionStatus = false
+            bluetoothGovernor.mService.disconnect()
+            Debugtext.setText("Disconnected!")
+        }
         MyList.setOnItemClickListener(this)
     }
 
     override fun onPause() {
         // Unregister since the activity is paused.
-        //this.unregisterReceiver(gattUpdateReceiver)
+        this.unregisterReceiver(gattUpdateReceiver)
 
         super.onPause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (bluetoothGovernor.mBound) {
+            bluetoothGovernor.mService?.close()
+        }
     }
 
     override fun onResume() {
+        //val filter = IntentFilter(ACTION_GATT_CONNECTED)
+        //filter.addAction(ACTION_GATT_DISCONNECTED)
+        //this.registerReceiver(gattUpdateReceiver, filter)
+
+
         // Register to receive messages.
         // We are registering an observer (mMessageReceiver) to receive Intents
         // with actions named "custom-event-name".
-        /*val filter = IntentFilter(ACTION_GATT_CONNECTED)
+        val filter = IntentFilter(ACTION_GATT_CONNECTED)
         filter.addAction(ACTION_DATA_AVAILABLE)
         filter.addAction(ACTION_GATT_DISCONNECTED)
         filter.addAction(ACTION_GATT_SERVICES_DISCOVERED)
         this.registerReceiver(gattUpdateReceiver, filter)
-         */
-        if (bluetoothGovernor.mBound) {
+
+        /*if (bluetoothGovernor.mBound) {
             bluetoothGovernor.mService.disconnect()
             Debugtext.setText("Disconnected!")
-        }
+        }*/
         super.onResume()
     }
 
@@ -127,6 +142,7 @@ class MainActivity : AppCompatActivity(), AdapterView.OnItemClickListener {
             Handler().postDelayed({
                 mScanning = false
                 bluetoothGovernor.bluetoothLeScanner.stopScan(leScanCallback)
+                Demotext.setText("Stopped searching.")
             }, SCAN_PERIOD)
             mScanning = true
             bluetoothGovernor.bluetoothLeScanner.startScan(leScanCallback)
@@ -156,6 +172,10 @@ class MainActivity : AppCompatActivity(), AdapterView.OnItemClickListener {
         }
     }
 
+    fun test() {
+        startActivity(Intent(this, Connection::class.java))
+    }
+
     /**
      * Start device connection
      */
@@ -163,17 +183,72 @@ class MainActivity : AppCompatActivity(), AdapterView.OnItemClickListener {
         //var intent: Intent = Intent(this,Demo::class.java)
         try {
             connected_device = id.toInt()
-            startActivity(Intent(this, Connection::class.java))
-            try {
-                if (mScanning) {
-                    bluetoothGovernor.bluetoothLeScanner.stopScan(leScanCallback)
-                }
-                bluetoothGovernor.mService.connect(mutable_list[connected_device])
-            } catch (e: Exception) {
-                Demotext.setText("Could not connect bluetooth")
-            }
+            //startActivity(Intent(this, Connection::class.java))
+            connectDevice()
         } catch(e: Exception) {
             Demotext.setText("Error when clicking device index " + id.toString())
+        }
+    }
+
+    private fun connectDevice() {
+        try {
+            if (mScanning) {
+                bluetoothGovernor.bluetoothLeScanner.stopScan(leScanCallback)
+            }
+            connectionStatus = true
+            bluetoothGovernor.mService.connect(mutable_list[connected_device])
+            Debugtext.setText("Trying to connect!")
+            Handler().postDelayed({
+                if (connectionStatus) {
+                    bluetoothGovernor.mService.disconnect()
+                    Demotext.setText("Could not connect to device at all!")
+                    connectionStatus = false
+                }
+            }, 5000)
+        } catch (e: Exception) {
+            Demotext.setText("Could not connect bluetooth")
+        }
+    }
+
+    private val gattUpdateReceiver = object : BroadcastReceiver() {
+        private var connected = false
+
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.action
+            when (action){
+                ACTION_GATT_CONNECTED -> {
+                    Demotext.setText("Connected! Tries: " + connectionFailures)
+                    Handler().postDelayed({
+                        if (connectionStatus) {
+                            Demotext.setText("Could not connect to GATT services")
+                        }
+                    }, 5000)
+
+                }
+                ACTION_GATT_SERVICES_DISCOVERED -> {
+                    connectionFailures = 0
+                    if (!connectionStatus) {
+                        bluetoothGovernor.mService.disconnect()
+                        return
+                    }
+                    Demotext.setText("Found Gatt services")
+                    connectionStatus = false
+                    test()
+                }
+                ACTION_GATT_DISCONNECTED -> {
+                    Debugtext.setText("Disconnected!")
+                    if (!connectionStatus) {
+                        connectionFailures = 0
+                        return
+                    }
+                    connectionFailures += 1
+                    if (connectionFailures <= 5) {
+                        connectDevice()
+                    } else {
+                        Demotext.setText("Could not connect bluetooth")
+                    }
+                }
+            }
         }
     }
 }
